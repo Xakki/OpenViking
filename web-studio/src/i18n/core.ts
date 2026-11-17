@@ -6,6 +6,16 @@ import { syncManifestLanguage } from './manifest'
 
 i18n.use(LanguageDetector).init({
   defaultNS: 'common',
+  detection: {
+    order: ['cookie', 'navigator'],
+    caches: ['cookie'],
+    cookieOptions: {
+      path: '/',
+      sameSite: 'lax',
+      secure: typeof location !== 'undefined' && location.protocol === 'https:',
+      maxAge: 60 * 60 * 24 * 365,
+    },
+  },
   fallbackLng: defaultLanguage,
   interpolation: {
     escapeValue: false,

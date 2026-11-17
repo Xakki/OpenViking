@@ -1,9 +1,24 @@
-# This file is preparation only; activation targets will be added once the
-# model configuration, port allocation and ingress contract are established.
-COMPOSE := podman-compose
+# Runtime lifecycle for this project. Credentials are supplied separately.
+COMPOSE := podman-compose -p openviking
 COMPOSE_FILE := compose.yaml
+.DEFAULT_GOAL := help
 
-.PHONY: help config-check
+.PHONY: help config-check up stop status logs compose-up-help
+compose-up-help:
+	$(COMPOSE) -f $(COMPOSE_FILE) up --help
+
+up:
+	$(COMPOSE) -f $(COMPOSE_FILE) up -d --no-build --no-recreate
+
+stop:
+	$(COMPOSE) -f $(COMPOSE_FILE) stop
+
+status:
+	$(COMPOSE) -f $(COMPOSE_FILE) ps
+
+logs:
+	$(COMPOSE) -f $(COMPOSE_FILE) logs --tail=100
+
 help:
 	@printf '%s\n' 'config-check: validate a configuration with explicit port and bind address'
 

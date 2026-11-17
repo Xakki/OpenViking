@@ -12,6 +12,12 @@ afterEach(async () => {
 })
 
 describe('Studio language at runtime', () => {
+  it('persists language in a cookie and does not derive it from URLs', async () => {
+    await i18n.changeLanguage('zh-CN')
+    expect(document.cookie).toContain('i18next=zh-CN')
+    expect(i18n.options.detection?.order).toEqual(['cookie', 'navigator'])
+    expect(i18n.options.detection?.caches).toEqual(['cookie'])
+  })
   it('synchronizes document language on every switch', async () => {
     for (const language of ['zh-CN', 'en']) {
       await i18n.changeLanguage(language)

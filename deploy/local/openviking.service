@@ -1,0 +1,18 @@
+[Unit]
+Description=OpenViking project service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/xakki/project/openviking/deploy/local
+Environment=OPENVIKING_BIND_ADDRESS=172.30.211.1
+Environment=OPENVIKING_HOST_PORT=10290
+ExecStart=/usr/bin/make up
+ExecStop=/usr/bin/make stop
+TimeoutStartSec=600
+TimeoutStopSec=300
+
+[Install]
+WantedBy=default.target

@@ -34,7 +34,9 @@ CLEAN_DIRS := \
 	**/__pycache__/
 
 .PHONY: all build clean help check-pip check-deps
-.PHONY: build-cli build-studio project-image project-image-count project-image-inspect
+.PHONY: build-cli build-studio project-image project-image-count project-image-inspect project-port-inventory
+project-port-inventory:
+	@$(CONTAINER_ENGINE) ps -a --format '{{.Names}} {{.Ports}}'
 
 project-image-inspect:
 	@$(CONTAINER_ENGINE) image inspect $(PROJECT_IMAGE) --format 'ID={{.Id}} Healthcheck={{json .Config.Healthcheck}}'
