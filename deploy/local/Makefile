@@ -3,7 +3,9 @@ COMPOSE := podman-compose -p openviking
 COMPOSE_FILE := compose.yaml
 .DEFAULT_GOAL := help
 
-.PHONY: help config-check up stop status logs compose-up-help
+.PHONY: help config-check up stop status logs compose-up-help inspect
+inspect:
+	@podman inspect openviking_openviking_1 --format 'image={{.Image}} state={{.State.Status}} health={{.State.Health.Status}} mounts={{json .Mounts}}'
 compose-up-help:
 	$(COMPOSE) -f $(COMPOSE_FILE) up --help
 
