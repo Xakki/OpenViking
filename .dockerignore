@@ -18,3 +18,11 @@ web-studio/.vite
 node_modules
 *.log
 *.tmp
+
+# Project runtime data and credentials must never enter the build context.
+/config/
+/data/
+/tmp/
+/.env
+/.env.*
+!.env.example

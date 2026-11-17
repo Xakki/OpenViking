@@ -585,7 +585,9 @@ export function StudioSetup({
                             className="h-11 rounded-lg"
                             type="url"
                             value={draft.baseUrl}
-                            placeholder="http://127.0.0.1:1933"
+                            placeholder={t(
+                              'connection:fields.baseUrl.placeholder',
+                            )}
                             aria-invalid={
                               Boolean(draft.baseUrl) && !canContinue
                             }

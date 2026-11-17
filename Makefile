@@ -1,9 +1,15 @@
 # Makefile for OpenViking
+.DEFAULT_GOAL := all
 
 # Variables
 PYTHON ?= python3
 SETUP_PY := setup.py
 OV_CLI_DIR := crates/ov_cli
+
+# Local project image
+CONTAINER_ENGINE ?= podman
+PROJECT_IMAGE ?= localhost/openviking:local
+PROJECT_VERSION := 0+git.$(shell git rev-parse --short=12 HEAD)
 
 # Dependency Versions
 MIN_PYTHON_VERSION := 3.10
@@ -28,7 +34,74 @@ CLEAN_DIRS := \
 	**/__pycache__/
 
 .PHONY: all build clean help check-pip check-deps
-.PHONY: build-cli build-studio
+.PHONY: build-cli build-studio project-image project-image-count project-image-inspect
+
+project-image-inspect:
+	@$(CONTAINER_ENGINE) image inspect $(PROJECT_IMAGE) --format 'ID={{.Id}} Healthcheck={{json .Config.Healthcheck}}'
+
+.PHONY: project-node-start project-node-audit project-node-update project-node-stop
+project-node-start:
+	@if $(CONTAINER_ENGINE) container exists openviking-dev-node; then \
+		$(CONTAINER_ENGINE) start openviking-dev-node; \
+	else \
+		$(CONTAINER_ENGINE) run -d --init --pull=never --name openviking-dev-node --userns=keep-id --user "$$(id -u):$$(id -g)" -v "$(CURDIR):/workspace:rw" -w /workspace/web-studio node:24-trixie-slim sleep infinity; \
+	fi
+
+project-node-audit:
+	@mkdir -p tmp/dependencies
+	$(CONTAINER_ENGINE) exec openviking-dev-node sh -c 'npm audit --package-lock-only --json > /workspace/tmp/dependencies/audit.json'
+
+.PHONY: project-node-audit-prod project-node-peer-diagnostics
+project-node-audit-prod:
+	$(CONTAINER_ENGINE) exec openviking-dev-node sh -c 'npm audit --package-lock-only --omit=dev --json > /workspace/tmp/dependencies/audit-prod.json'
+
+project-node-peer-diagnostics:
+	$(CONTAINER_ENGINE) exec openviking-dev-node node -e 'const fs=require("fs"),os=require("os"),p=require("path");const d=p.join(os.homedir(),".npm/_logs");for(const f of fs.readdirSync(d).filter(x=>x.endsWith(".log"))){const t=fs.readFileSync(p.join(d,f),"utf8").split("\n");for(let i=0;i<t.length;i++)if(t[i].includes("ERESOLVE overriding peer dependency"))console.log(t.slice(Math.max(0,i-2),i+8).join("\n"))}'
+
+.PHONY: project-node-metadata
+project-node-metadata:
+	$(CONTAINER_ENGINE) exec openviking-dev-node sh -c 'for p in typescript-eslint@8.58.0 @typescript-eslint/eslint-plugin@8.58.0; do npm view "$$p" version peerDependencies --json; done'
+
+.PHONY: project-node-security-update
+project-node-security-update:
+	$(CONTAINER_ENGINE) exec openviking-dev-node npm install --package-lock-only --ignore-scripts --no-audit --save-dev eslint@^10.15.0
+
+project-node-update:
+	$(CONTAINER_ENGINE) exec openviking-dev-node npm update --package-lock-only --ignore-scripts --no-audit
+
+.PHONY: project-node-install project-node-build
+project-node-install:
+	$(CONTAINER_ENGINE) exec openviking-dev-node npm install --ignore-scripts --no-audit --no-fund
+
+.PHONY: project-node-lint-preview
+project-node-lint-preview:
+	$(CONTAINER_ENGINE) exec openviking-dev-node sh -c './node_modules/.bin/eslint src --ignore-pattern "src/gen/**" --ignore-pattern "src/routeTree.gen.ts" --fix-dry-run --fix-type suggestion --format json > /workspace/tmp/dependencies/lint-preview.json'
+
+.PHONY: project-node-i18n project-node-types project-node-format-check
+project-node-format-check:
+	$(CONTAINER_ENGINE) exec openviking-dev-node ./node_modules/.bin/prettier --check src/shared/components/code-editor.tsx src/features/connection/components/studio-setup.tsx
+project-node-types:
+	$(CONTAINER_ENGINE) exec openviking-dev-node ./node_modules/.bin/tsc --noEmit
+
+project-node-i18n:
+	$(CONTAINER_ENGINE) exec openviking-dev-node npm run test:i18n
+
+project-node-build:
+	$(CONTAINER_ENGINE) exec openviking-dev-node npm run build -- --base=/studio/
+
+.PHONY: project-node-status
+project-node-status:
+	@$(CONTAINER_ENGINE) inspect --format 'name={{.Name}} status={{.State.Status}}' openviking-dev-node
+
+project-node-stop:
+	$(CONTAINER_ENGINE) stop openviking-dev-node
+
+project-image-count:
+	@ids="$$($(CONTAINER_ENGINE) images -a --format '{{.ID}}')" || exit $$?; \
+	if [ -n "$$ids" ]; then printf '%s\n' "$$ids" | wc -l; else printf '0\n'; fi
+
+project-image:
+	$(CONTAINER_ENGINE) build --format docker --build-arg OPENVIKING_VERSION=$(PROJECT_VERSION) --build-arg UV_LOCK_STRATEGY=locked -t $(PROJECT_IMAGE) .
 
 all: build
 

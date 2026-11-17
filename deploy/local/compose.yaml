@@ -1,0 +1,21 @@
+# Preparation only: select and register the host port before activation.
+# Run through the project's Make targets; do not invoke Docker Compose directly.
+services:
+  openviking:
+    image: localhost/openviking:local
+    ports:
+      - "${OPENVIKING_BIND_ADDRESS:?set an approved bind address}:${OPENVIKING_HOST_PORT:?register and set a host port}:1933"
+    volumes:
+      - ../../config:/app/.openviking/config-ro:ro
+      - ../../data:/app/.openviking/data
+    environment:
+      OPENVIKING_CONFIG_FILE: /app/.openviking/config-ro/ov.conf
+      OPENVIKING_WITH_BOT: "0"
+      OPENVIKING_SERVER_PORT: "1933"
+    healthcheck:
+      test: ["CMD", "openviking-entrypoint", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
