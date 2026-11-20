@@ -81,6 +81,9 @@ class VLMCredential(BaseModel):
     api_key: Optional[str] = RuntimeField(default=None, description="API key")
     api_base: Optional[str] = RuntimeField(default=None, description="API base URL")
     api_version: Optional[str] = RuntimeField(default=None, description="API version")
+    http_job: Optional[Dict[str, Any]] = RuntimeField(
+        default=None, description="HTTP job preset, mapping and polling settings"
+    )
     forward_api_key: Optional[bool] = RuntimeField(
         default=None, description="Whether to pass api_key through to LiteLLM"
     )
@@ -188,6 +191,9 @@ class VLMConfig(BaseModel):
     )
 
     provider: Optional[str] = Field(default=None, description="Provider type")
+    http_job: Optional[Dict[str, Any]] = Field(
+        default=None, description="HTTP job preset, mapping and polling settings"
+    )
     backend: Optional[str] = Field(
         default=None, description="Backend provider (Deprecated, use 'provider' instead)"
     )
@@ -323,6 +329,14 @@ class VLMConfig(BaseModel):
                             raise ValueError(
                                 f"Credential {i} ({cred.id or 'unnamed'}): requires Codex OAuth credentials in ~/.openviking/codex_auth.json"
                             )
+                    elif provider_name == "http_job":
+                        if not cred.http_job:
+                            raise ValueError("HTTP job VLM requires 'http_job' settings")
+                        if cred.http_job.get("preset") == "convertor":
+                            if not cred.api_key:
+                                raise ValueError("Convertor VLM requires 'api_key'")
+                        elif not cred.api_base:
+                            raise ValueError("Generic HTTP job VLM requires 'api_base'")
                     elif provider_name not in ("litellm", None) and not cred.api_key:
                         # Also check providers dict for fallback
                         if not self._get_credential_api_key(cred):
@@ -413,6 +427,7 @@ class VLMConfig(BaseModel):
                 model=self.model,
                 api_key=primary_cfg.get("api_key") or self.api_key,
                 api_base=primary_cfg.get("api_base") or self.api_base,
+                http_job=primary_cfg.get("http_job"),
                 api_version=primary_cfg.get("api_version") or self.api_version,
                 forward_api_key=(
                     primary_cfg.get("forward_api_key")
@@ -443,6 +458,7 @@ class VLMConfig(BaseModel):
                 model=self.backup.model,
                 api_key=backup_cfg.get("api_key") or self.backup.api_key,
                 api_base=backup_cfg.get("api_base") or self.backup.api_base,
+                http_job=backup_cfg.get("http_job"),
                 api_version=backup_cfg.get("api_version") or self.backup.api_version,
                 forward_api_key=(
                     backup_cfg.get("forward_api_key")
@@ -486,6 +502,7 @@ class VLMConfig(BaseModel):
                         model=self.model,
                         api_key=provider_cfg.get("api_key") or self.api_key,
                         api_base=provider_cfg.get("api_base") or self.api_base,
+                        http_job=provider_cfg.get("http_job"),
                         api_version=provider_cfg.get("api_version") or self.api_version,
                         forward_api_key=(
                             provider_cfg.get("forward_api_key")
@@ -524,6 +541,14 @@ class VLMConfig(BaseModel):
                 cred.api_key = self._get_credential_api_key(cred)
             if not cred.api_base:
                 cred.api_base = self.api_base
+            if cred.provider == "http_job":
+                provider_config = self._get_provider_config_by_name(cred.provider)
+                if cred.http_job is None:
+                    cred.http_job = provider_config.get("http_job")
+                if not cred.api_key:
+                    cred.api_key = provider_config.get("api_key")
+                if not cred.api_base:
+                    cred.api_base = provider_config.get("api_base")
             if not cred.api_version:
                 cred.api_version = self.api_version
             if cred.forward_api_key is None:
@@ -577,6 +602,8 @@ class VLMConfig(BaseModel):
 
     def _get_provider_config_by_name(self, provider_name: str) -> Dict[str, Any]:
         config = dict(self.providers.get(provider_name) or {})
+        if provider_name == "http_job" and self.http_job is not None:
+            config.setdefault("http_job", self.http_job)
         if self.api_key and "api_key" not in config:
             config["api_key"] = self.api_key
         if self.forward_api_key is not None and "forward_api_key" not in config:
@@ -594,6 +621,9 @@ class VLMConfig(BaseModel):
         return config
 
     def _provider_has_usable_credentials(self, provider_name: str, config: Dict[str, Any]) -> bool:
+        if provider_name == "http_job":
+            # Do not silently select a job provider from a list of candidates.
+            return False
         if config.get("api_key"):
             return True
         if provider_name == "litellm":
@@ -606,6 +636,8 @@ class VLMConfig(BaseModel):
 
     def _get_provider_config_from_credential(self, cred: VLMCredential) -> Dict[str, Any]:
         config: Dict[str, Any] = {}
+        if cred.provider == "http_job":
+            config["http_job"] = cred.http_job
         if cred.api_key:
             config["api_key"] = cred.api_key
         if cred.api_base:
@@ -767,6 +799,8 @@ class VLMConfig(BaseModel):
             result["extra_request_body"] = credential.extra_request_body
         if credential.reasoning_effort:
             result["reasoning_effort"] = credential.reasoning_effort
+        if credential.provider == "http_job":
+            result["http_job"] = credential.http_job
 
         return result
 
@@ -847,6 +881,9 @@ class VLMConfig(BaseModel):
 
     def is_available(self) -> bool:
         """Check if LLM is configured."""
+        if self._resolve_provider_name() == "http_job":
+            settings, _ = self.get_provider_config()
+            return bool(self.model and settings and settings.get("http_job"))
         if self._resolve_provider_name() == "openai-codex":
             has_codex_auth_available = _load_codex_auth_module().has_codex_auth_available
 

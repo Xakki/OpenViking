@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0
 from typing import Any, ClassVar, List, Literal, Optional, Tuple, cast
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openviking_cli.utils.logger import get_logger
 
@@ -41,6 +41,60 @@ class EmbeddingCredential(BaseModel):
     extra_headers: Optional[dict[str, str]] = Field(default=None, description="Extra HTTP headers")
 
 
+class HttpJobEmbeddingConfig(BaseModel):
+    """JSON job mapping or the fixed Convertor multipart contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    preset: Literal["json", "convertor"] = "json"
+    submit_route: Optional[str] = None
+    poll_route: Optional[str] = None
+    result_route: Optional[str] = None
+    id_path: tuple[str, ...] = ("id",)
+    status_path: tuple[str, ...] = ("status",)
+    result_path: tuple[str, ...] = ("data",)
+    pending_statuses: frozenset[str] = frozenset({"pending", "processing"})
+    success_statuses: frozenset[str] = frozenset({"completed"})
+    failure_statuses: frozenset[str] = frozenset({"failed", "expired"})
+    input_key: str = "input"
+    model_key: str = "model"
+    timeout: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    poll_interval: float = Field(default=0.5, gt=0, allow_inf_nan=False)
+
+    def make_mapping(self, origin: str):
+        from openviking.models.http_job import HttpJobMapping
+
+        if self.preset == "convertor":
+            return HttpJobMapping(
+                origin=origin,
+                submit_route="/api/v1/convert",
+                poll_route="/api/v1/convert/{id}/status",
+                result_route="/api/v1/convert/{id}/download",
+                id_path=("conversion_id",),
+                status_path=("status",),
+                pending_statuses=frozenset({"pending", "processing"}),
+                success_statuses=frozenset({"completed"}),
+                failure_statuses=frozenset({"failed", "expired"}),
+                multipart_field="file",
+            )
+        if not self.submit_route or not self.poll_route:
+            raise ValueError("HTTP job JSON mapping requires submit_route and poll_route")
+        if not self.input_key or not self.model_key or self.input_key == self.model_key:
+            raise ValueError("HTTP job JSON mapping requires distinct nonempty input and model keys")
+        return HttpJobMapping(
+            origin=origin,
+            submit_route=self.submit_route,
+            poll_route=self.poll_route,
+            result_route=self.result_route,
+            id_path=self.id_path,
+            status_path=self.status_path,
+            result_path=self.result_path,
+            pending_statuses=self.pending_statuses,
+            success_statuses=self.success_statuses,
+            failure_statuses=self.failure_statuses,
+        )
+
+
 class EmbeddingModelConfig(BaseModel):
     """Configuration for a specific embedding model"""
 
@@ -50,6 +104,9 @@ class EmbeddingModelConfig(BaseModel):
     dimension: Optional[int] = Field(default=None, description="Embedding dimension")
     batch_size: int = Field(default=32, description="Batch size for embedding generation")
     input: str = Field(default="multimodal", description="Input type: 'text' or 'multimodal'")
+    http_job: Optional[HttpJobEmbeddingConfig] = Field(
+        default=None, description="Job mapping for the opt-in http_job dense provider"
+    )
     query_param: Optional[str] = Field(
         default=None,
         description=(
@@ -182,6 +239,7 @@ class EmbeddingModelConfig(BaseModel):
         "cohere",
         "litellm",
         "local",
+        "http_job",
     )
 
     @classmethod
@@ -248,6 +306,11 @@ class EmbeddingModelConfig(BaseModel):
                     "dashscope": "DashScope",
                 }[provider]
                 raise ValueError(f"{label}: {provider_label} provider requires 'api_key' to be set")
+        elif provider == "http_job":
+            if not api_base:
+                raise ValueError(f"{label}: HTTP job provider requires an 'api_base' origin")
+            if api_key and not api_base.startswith("https://"):
+                raise ValueError(f"{label}: HTTP job bearer authentication requires HTTPS")
         elif provider == "vikingdb":
             missing = [n for n, v in (("ak", ak), ("sk", sk), ("region", region)) if not v]
             if missing:
@@ -288,12 +351,18 @@ class EmbeddingModelConfig(BaseModel):
             label="Embedding",
             provider=self.provider,
             model=self.model,
+            api_base=self.api_base,
         )
 
         return self
 
     def _validate_provider_specific_options(
-        self, *, label: str, provider: Optional[str], model: Optional[str]
+        self,
+        *,
+        label: str,
+        provider: Optional[str],
+        model: Optional[str],
+        api_base: Optional[str] = None,
     ) -> None:
         """Validate provider-specific options that go beyond auth.
 
@@ -309,7 +378,15 @@ class EmbeddingModelConfig(BaseModel):
         if not provider:
             return
 
-        if provider == "gemini":
+        if provider == "http_job":
+            if self.dimension is None or self.dimension <= 0:
+                raise ValueError(f"{label}: HTTP job provider requires a positive native dimension")
+            if self.http_job is None or api_base is None:
+                raise ValueError(f"{label}: HTTP job provider requires an 'http_job' mapping")
+            if self.http_job.preset == "convertor" and self.extra_body:
+                raise ValueError(f"{label}: Convertor embedding preset does not use extra_body")
+            self.http_job.make_mapping(api_base)
+        elif provider == "gemini":
             _GEMINI_TASK_TYPES = {
                 "RETRIEVAL_QUERY",
                 "RETRIEVAL_DOCUMENT",
@@ -383,6 +460,7 @@ class EmbeddingModelConfig(BaseModel):
                 label=label,
                 provider=resolved_provider,
                 model=resolved_model,
+                api_base=cred.api_base or self.api_base,
             )
 
     def _validate_credential_dimensions(self) -> None:
@@ -761,6 +839,27 @@ class EmbeddingConfig(BaseModel):
         if provider == "litellm" and LiteLLMDenseEmbedder is None:
             raise ValueError("LiteLLM is not installed. Install it with: pip install litellm")
 
+        if provider == "http_job":
+            from openviking.models.embedder.http_job_embedders import HttpJobDenseEmbedder
+
+            if embedder_type != "dense":
+                raise ValueError("HTTP job provider supports only dense embeddings")
+            job = config.http_job
+            assert job is not None and config.api_base and config.model and config.dimension
+            # Retrying the entire operation could create a second remote job.
+            return HttpJobDenseEmbedder(
+                config.model,
+                mapping=job.make_mapping(config.api_base),
+                dimension=config.dimension,
+                convertor=job.preset == "convertor",
+                input_key=job.input_key,
+                model_key=job.model_key,
+                extra_body=config.extra_body,
+                bearer_token=config.api_key,
+                timeout=job.timeout,
+                poll_interval=job.poll_interval,
+            )
+
         # Factory registry: (provider, type) -> (embedder_class, param_builder)
         runtime_config = {
             "max_retries": self.max_retries,
@@ -1107,6 +1206,7 @@ class EmbeddingConfig(BaseModel):
                 # same model and live only on the parent config.
                 encoding_format=config.encoding_format,
                 extra_body=config.extra_body,
+                http_job=config.http_job,
                 model_path=config.model_path,
                 cache_dir=config.cache_dir,
                 enable_fusion=config.enable_fusion,

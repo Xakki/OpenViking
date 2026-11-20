@@ -72,6 +72,8 @@ def vlm_upstreams(config: VLMConfig) -> dict:
         reason = None
         if provider == "openai-codex":
             reason = "openai_codex"
+        elif provider == "http_job":
+            reason = "http_job"
         elif provider == "azure" or (provider == "litellm" and route.startswith("azure/")):
             from openviking.models.vlm.registry import DEFAULT_AZURE_API_VERSION
 

@@ -408,6 +408,11 @@ class VLMFactory:
 
             return GLMVLM(config)
 
+        elif provider == "http_job":
+            from .backends.http_job_vlm import HttpJobVLM
+
+            return HttpJobVLM(config)
+
         else:
             from .backends.litellm_vlm import LiteLLMVLMProvider
 
@@ -418,7 +423,11 @@ class VLMFactory:
         """Create one VLM target with the standard retry owner."""
         from .retry_vlm import RetryVLM
 
-        return RetryVLM(VLMFactory._create_provider(config))
+        backend = VLMFactory._create_provider(config)
+        if backend.provider == "http_job":
+            # Retrying a whole job can duplicate a billable submission.
+            return backend
+        return RetryVLM(backend)
 
 
 def _annotate_vlm_error(exc: Exception, vlm_instance: "VLMBase") -> None:
