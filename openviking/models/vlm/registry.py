@@ -14,9 +14,11 @@ VALID_PROVIDERS: tuple[str, ...] = (
     "glm",
     "litellm",
     "openai-codex",
+    "http_job",
 )
 
 DEFAULT_AZURE_API_VERSION: str = "2025-01-01-preview"
+DEFAULT_CONVERTOR_ORIGIN: str = "https://convertor.xakki.pro"
 
 
 def get_all_provider_names() -> list[str]:

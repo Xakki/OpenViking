@@ -347,6 +347,55 @@ Use a vision-capable GLM model such as `glm-4.6v` or `glm-5v-turbo` when OpenVik
 
 </details>
 
+### HTTP job providers (opt-in)
+
+Set `provider` to `http_job` in `ov.conf` to use submit/poll/result endpoints instead of an OpenAI-compatible endpoint. Embeddings accept text and return dense vectors only. The VLM supports non-streaming text completions only: no vision, audio, or tools. Studio does not support configuring these providers, and the VLM is not exported as a Gateway upstream. Existing defaults are unchanged. These examples were checked offline; no live deployment or inference was performed.
+
+**Convertor preset.** `api_base` is the HTTPS origin, not an API path. Replace the placeholders through your normal secret configuration before use. Check the public format catalog for the current model keys before deploying.
+
+```json
+{
+  "embedding": {
+    "dense": {
+      "provider": "http_job", "api_base": "https://convertor.xakki.pro",
+      "model": "qwen3-embedding-0.6b", "dimension": 1024, "input": "text",
+      "api_key": "example-token-replace-me", "http_job": {"preset": "convertor"}
+    }
+  },
+  "vlm": {
+    "provider": "http_job", "api_base": "https://convertor.xakki.pro",
+    "model": "gonka/fast", "api_key": "example-token-replace-me", "thinking": false,
+    "http_job": {"preset": "convertor"}
+  }
+}
+```
+
+**Alternative JSON mapping.** Replace the example origin and routes with those of your service. In this example, submit returns `{"job":{"id":"abc"}}`; poll returns a top-level `state`, and on `ready` it also returns `output.vectors` (indexed embeddings) or `output.text` (completion text). Supply `result_route` if results instead come from a separate endpoint. Bearer authentication is optional for this mapping and requires HTTPS when used.
+
+```json
+{
+  "embedding": {
+    "dense": {
+      "provider": "http_job", "api_base": "https://jobs.example.test",
+      "model": "embed-text", "dimension": 1024, "input": "text",
+      "http_job": {
+        "preset": "json", "submit_route": "/embeddings", "poll_route": "/jobs/{id}",
+        "id_path": ["job", "id"], "status_path": ["state"], "success_statuses": ["ready"],
+        "result_path": ["output", "vectors"], "input_key": "texts", "model_key": "engine"
+      }
+    }
+  },
+  "vlm": {
+    "provider": "http_job", "api_base": "https://jobs.example.test", "model": "chat-text",
+    "http_job": {
+      "preset": "generic", "submit_route": "/completions", "poll_route": "/jobs/{id}",
+      "id_path": ["job", "id"], "status_path": ["state"], "success_statuses": ["ready"],
+      "result_path": ["output", "text"]
+    }
+  }
+}
+```
+
 ## Configuration Sections
 
 ### embedding
